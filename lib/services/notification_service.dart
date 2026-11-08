@@ -15,6 +15,7 @@ class AdminNotificationService {
     required String title,
     required String body,
     String type = 'system',
+    String? orderId,
   }) async {
     await _firestore.collection('notifications').add({
       'userId': userId,
@@ -22,6 +23,7 @@ class AdminNotificationService {
       'body': body,
       'type': type,
       'read': false,
+      if (orderId != null && orderId.isNotEmpty) 'orderId': orderId,
       'createdAt': FieldValue.serverTimestamp(),
     });
   }

@@ -3,6 +3,8 @@ import 'dart:math' as math;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
+import 'notification_service.dart';
+
 /// Statuses offered by the admin fulfillment workflow.
 const List<String> kOrderStatuses = [
   'Pending',
@@ -39,6 +41,10 @@ class AdminOrderService {
     required String orderId,
     required String newStatus,
   }) async {
+    var statusChanged = false;
+    var previousStatus = '';
+    var customerId = '';
+
     try {
       await _firestore.runTransaction((transaction) async {
         final orderRef = _orders.doc(orderId);
@@ -48,6 +54,9 @@ class AdminOrderService {
         }
 
         final order = orderSnap.data() ?? <String, dynamic>{};
+        previousStatus = _readStatus(order);
+        customerId = order['customerId']?.toString() ?? '';
+        statusChanged = previousStatus != newStatus;
         // `false` = stock not deducted yet (new orders).
         // `true` = already deducted by a previous completion.
         // missing = legacy order that reserved stock at checkout, so treat it
@@ -180,6 +189,9 @@ class AdminOrderService {
         }
 
         transaction.update(orderRef, {
+          // `orderStatus` is the field the customer app listens to. `status`
+          // is mirrored for legacy reports and dashboards.
+          'orderStatus': newStatus,
           'status': newStatus,
           'updatedAt': FieldValue.serverTimestamp(),
           if (shouldDeduct) 'inventoryDeducted': true,
@@ -196,6 +208,59 @@ class AdminOrderService {
       debugPrint('AdminOrderService.updateStatus: error $error\n$stack');
       rethrow;
     }
+
+    // The order is already updated at this point. Notification delivery is
+    // best-effort so a notification-rule problem can never roll back (or
+    // falsely fail) the fulfillment update.
+    if (statusChanged && customerId.isNotEmpty) {
+      await _notifyStatusChange(
+        orderId: orderId,
+        customerId: customerId,
+        previousStatus: previousStatus,
+        newStatus: newStatus,
+      );
+    }
+  }
+
+  Future<void> _notifyStatusChange({
+    required String orderId,
+    required String customerId,
+    required String previousStatus,
+    required String newStatus,
+  }) async {
+    final shortId = _shortOrderId(orderId);
+    try {
+      await AdminNotificationService().createNotification(
+        userId: customerId,
+        title: 'Order ${newStatus.toLowerCase()}',
+        body: 'Your order #$shortId changed from $previousStatus to '
+            '$newStatus. Tap to view the latest status.',
+        type: 'order',
+        orderId: orderId,
+      );
+      debugPrint(
+        'AdminOrderService: notified customer $customerId about order '
+        '$orderId ($previousStatus -> $newStatus)',
+      );
+    } catch (error, stack) {
+      debugPrint(
+        'AdminOrderService: could not create status notification for '
+        '$orderId: $error\n$stack',
+      );
+    }
+  }
+
+  static String _readStatus(Map<String, dynamic> order) {
+    for (final key in const ['orderStatus', 'status']) {
+      final value = order[key]?.toString().trim() ?? '';
+      if (value.isNotEmpty) return value;
+    }
+    return 'Pending';
+  }
+
+  static String _shortOrderId(String orderId) {
+    final end = orderId.length > 8 ? 8 : orderId.length;
+    return orderId.substring(0, end).toUpperCase();
   }
 
   static int _quantityOf(Map<String, dynamic> item) =>

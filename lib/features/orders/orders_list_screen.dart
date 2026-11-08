@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/constants/app_colors.dart';
+import '../../services/order_service.dart';
 
 class OrdersListScreen extends StatefulWidget {
   const OrdersListScreen({super.key});
@@ -12,7 +13,36 @@ class OrdersListScreen extends StatefulWidget {
 }
 
 class _OrdersListScreenState extends State<OrdersListScreen> {
+  final _service = AdminOrderService();
   String _filter = 'All';
+  String? _updatingOrderId;
+
+  Future<void> _quickUpdateStatus(String orderId, String status) async {
+    setState(() => _updatingOrderId = orderId);
+    try {
+      await _service.updateStatus(orderId: orderId, newStatus: status);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Order #${orderId.substring(0, 8).toUpperCase()} updated to '
+            '$status.',
+          ),
+          backgroundColor: AppColors.success,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _updatingOrderId = null);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -77,8 +107,9 @@ class _OrdersListScreenState extends State<OrdersListScreen> {
                 if (_filter != 'All') {
                   docs = docs
                       .where(
-                        (d) =>
-                            (d.data() as Map<String, dynamic>)['status'] ==
+                        (d) => _orderStatus(
+                              d.data() as Map<String, dynamic>,
+                            ) ==
                             _filter,
                       )
                       .toList();
@@ -131,7 +162,7 @@ class _OrdersListScreenState extends State<OrdersListScreen> {
                     ],
                     rows: docs.map((doc) {
                       final data = doc.data() as Map<String, dynamic>;
-                      final status = data['status'] ?? 'Pending';
+                      final status = _orderStatus(data);
                       final created = data['createdAt'] as Timestamp?;
                       return DataRow(
                         cells: [
@@ -179,12 +210,64 @@ class _OrdersListScreenState extends State<OrdersListScreen> {
                             ),
                           ),
                           DataCell(
-                            IconButton(
-                              icon: const Icon(
-                                Icons.visibility_outlined,
-                                color: AppColors.primaryAccent,
-                              ),
-                              onPressed: () => context.go('/orders/${doc.id}'),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  tooltip: 'View order',
+                                  icon: const Icon(
+                                    Icons.visibility_outlined,
+                                    color: AppColors.primaryAccent,
+                                  ),
+                                  onPressed: () =>
+                                      context.go('/orders/${doc.id}'),
+                                ),
+                                if (_updatingOrderId == doc.id)
+                                  const Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                    ),
+                                    child: SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  PopupMenuButton<String>(
+                                    tooltip: 'Update status',
+                                    enabled: _updatingOrderId == null,
+                                    icon: const Icon(
+                                      Icons.more_vert,
+                                      color: AppColors.secondaryText,
+                                    ),
+                                    onSelected: (value) =>
+                                        _quickUpdateStatus(doc.id, value),
+                                    itemBuilder: (context) => kOrderStatuses
+                                        .map(
+                                          (option) => PopupMenuItem<String>(
+                                            value: option,
+                                            child: Row(
+                                              children: [
+                                                _StatusChip(status: option),
+                                                if (option == status) ...[
+                                                  const SizedBox(width: 8),
+                                                  const Icon(
+                                                    Icons.check,
+                                                    size: 15,
+                                                    color:
+                                                        AppColors.primaryAccent,
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
+                                          ),
+                                        )
+                                        .toList(),
+                                  ),
+                              ],
                             ),
                           ),
                         ],
@@ -198,6 +281,14 @@ class _OrdersListScreenState extends State<OrdersListScreen> {
         ),
       ],
     );
+  }
+
+  String _orderStatus(Map<String, dynamic> data) {
+    for (final key in const ['orderStatus', 'status']) {
+      final value = data[key]?.toString().trim() ?? '';
+      if (value.isNotEmpty) return value;
+    }
+    return 'Pending';
   }
 
   String _formatDate(DateTime d) =>

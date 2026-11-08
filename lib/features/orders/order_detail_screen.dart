@@ -70,7 +70,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         }
 
         final data = snap.data!.data() ?? <String, dynamic>{};
-        final rawStatus = data['status']?.toString().trim() ?? '';
+        final rawStatus =
+            (data['orderStatus'] ?? data['status'])?.toString().trim() ?? '';
         final status = rawStatus.isEmpty ? 'Pending' : rawStatus;
         final items = data['items'] as List? ?? [];
         final shipping =
@@ -161,10 +162,16 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                '${shipping['street'] ?? ''}, '
-                                '${shipping['city'] ?? ''}, '
-                                '${shipping['province'] ?? ''} '
-                                '${shipping['postalCode'] ?? ''}',
+                                [
+                                  shipping['street'],
+                                  shipping['barangay'],
+                                  shipping['city'],
+                                  shipping['province'],
+                                  shipping['postalCode'],
+                                ]
+                                    .map((part) => part?.toString().trim() ?? '')
+                                    .where((part) => part.isNotEmpty)
+                                    .join(', '),
                                 style: const TextStyle(
                                   color: AppColors.secondaryText,
                                 ),
